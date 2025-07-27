@@ -112,7 +112,7 @@ class ApiController extends Controller
                     // 3. Poblar DetailsExpediente
                     foreach ($data['detailsExp'] as $detail) {
                         DetailsExpediente::create([
-                            'nUnico' => $data['cabExpedienteChat']['nUnico'] ?? null,
+                            'nUnico' => $data['cabExpedienteChat']['nunico'] ?? null,
                             'xFormato' => $detail['numeroExpediente'] ?? null,
                             'xNomInstancia' => $detail['instancia'] ?? null,
                             'codEspecialidad' => $detail['codigoEspecialidad'] ?? null,
@@ -141,7 +141,7 @@ class ApiController extends Controller
                     $mainConsulta->status = 2; // 2 -> Encontrado/Procesado
                 } else {
                     // Actualizar MainConsulta a "No Encontrado"
-                    $mainConsulta->status = 0; // 0 -> No Encontrado
+                    $mainConsulta->status = 3; // 3 -> No Encontrado
                 }
 
                 // Guardar el cambio de estado de la consulta principal

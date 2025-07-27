@@ -3,11 +3,14 @@ use u230756120_JURISDB_CHATB;
 
 CREATE TABLE If Not Exists u230756120_JURISDB_CHATB.MainConsulta (
 id bigint unsigned primary key not null auto_increment,
-status tinyint DEFAULT 1 Comment 'Status del step: 1-> Iniciado, 0 -> No encontrado, 2 -> Encontrado',
+status tinyint DEFAULT 1 Comment 'Status del step: 0->pre iniciado, 1-> Iniciado, 2 -> Encontrado , 3 -> No encontrado',
 step tinyint DEFAULT 0 Comment 'Paso de la consulta: 0-> Inicio, 1-> Consulta Exp, 2-> Consulta Parte, 3-> Consulta Mensaje, 4 -> done',
 service char(50) DEFAULT NULL Comment 'Servicio de Consulta: telegram, whatsapp, etc.',
 chatId char(100) NOT NULL Comment 'Id del Chat',
 message text default null Comment 'Texto del mensaje',
+tipoParteSeleccionada char(50) default null Comment 'Tipo de Parte Seleccionada',
+dni char(20) default null Comment 'DNI Ingresado',
+consultaEspecifica char(30) default null Comment 'Consulta Especifica: depositos, ubicacion, estadoexp, calificacion, estadodemanda, liquidacion, informe',
 regDate date Null Comment 'Fecha create',
 regDatetime datetime Null Comment 'Fecha Hora create',
 regTimestamp bigint Null Comment 'Epoch create',
