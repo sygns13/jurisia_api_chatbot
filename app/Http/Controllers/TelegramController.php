@@ -25,10 +25,24 @@ class TelegramController extends Controller
             $chatId = $callbackQuery->getMessage()->getChat()->getId();
             $data = $callbackQuery->getData();
             $this->answerCallbackQuery($callbackQuery->getId()); // Confirma la recepción al usuario
-        } else {
+        
+        } elseif ($update->getMessage()) {
             $message = $update->getMessage();
             $chatId = $message->getChat()->getId();
+
+            // Validación de tipo de mensaje
+            if (!$message->has('text')) {
+                Telegram::sendMessage([
+                    'chat_id' => $chatId,
+                    'text' => 'Por favor, envía solo mensajes de texto. No puedo procesar archivos, imágenes o stickers.'
+                ]);
+                return response()->json(['status' => 'unsupported_type']);
+            }
             $text = $message->getText();
+
+        } else {
+            // Ignorar updates que no son ni mensajes ni callbacks
+            return response()->json(['status' => 'ignored']);
         }
 
         // Obtener o crear el estado de la conversación para este usuario
@@ -155,6 +169,13 @@ class TelegramController extends Controller
                 'chat_id' => $consulta->chatId,
                 'text' => "No se encontró el expediente. Por favor, verifica el número e ingrésalo de nuevo.",
             ]);
+            $consulta->status = 0; // Resetear el estado
+            $consulta->step = 0; // Volver al paso inicial
+            $consulta->updDate = now()->toDateString();
+            $consulta->updDatetime = now();
+            $consulta->updTimestamp = now()->timestamp;
+            $consulta->save();
+            $this->resetConversation($consulta);
             return;
         }
 
