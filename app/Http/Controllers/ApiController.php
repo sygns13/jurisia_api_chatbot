@@ -9,6 +9,7 @@ use App\Models\DetailsExpediente;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
 class ApiController extends Controller
@@ -19,6 +20,7 @@ class ApiController extends Controller
             // Realiza la consulta a la base de datos usando el modelo de Eloquent.
             $consultasPendientes = MainConsulta::where('status', 1)
                                                ->where('step', 1)
+                                               ->whereNotNull('message')
                                                ->get();
 
             // Retorna una respuesta JSON estándar con los datos.
@@ -29,12 +31,21 @@ class ApiController extends Controller
                 'message' => 'Se recuperaron ' . $consultasPendientes->count() . ' consultas pendientes.'
             ], 200);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             // En caso de un error en la base de datos u otro problema,
             // se devuelve una respuesta de error del servidor.
+            //
+            // No se puede usar $consultasPendientes aquí: si el try falló, la
+            // variable no existe y el propio catch termina fallando, ocultando
+            // la causa real del problema.
+            Log::error('Error al recuperar las consultas pendientes: ' . $e->getMessage(), [
+                'archivo' => $e->getFile(),
+                'linea' => $e->getLine(),
+            ]);
+
             return response()->json([
                 'success' => false,
-                'itemFound' => $consultasPendientes->count() > 0,
+                'itemFound' => false,
                 'message' => 'Ocurrió un error al recuperar las consultas.',
                 'error'   => $e->getMessage()
             ], 500);

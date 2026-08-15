@@ -13,7 +13,11 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register()
     {
-        //
+        $this->app->bind('path.public', function() {
+        // Esto le dice a Laravel que la carpeta pública está un nivel
+        // por encima de la carpeta raíz del proyecto (appJurisiaApiBot)
+        return dirname(base_path());
+    });
     }
 
     /**
