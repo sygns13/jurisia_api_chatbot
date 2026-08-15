@@ -11,9 +11,30 @@ use App\Models\MainConsulta;
 use App\Models\CabExpediente;
 use App\Models\PartesExp;
 use App\Models\DetailsExpediente;
+use App\Http\Controllers\Concerns\FormateaRespuestasExpediente;
 
 class TelegramController extends Controller
 {
+    use FormateaRespuestasExpediente;
+
+    /**
+     * Límite de caracteres de un mensaje de Telegram. Por encima, la API responde
+     * 400 Bad Request y el usuario no recibe nada.
+     */
+    const LIMITE_MENSAJE = 4096;
+
+    /**
+     * Telegram valida el Markdown en el servidor y rechaza el mensaje completo si el
+     * texto trae asteriscos o guiones bajos desbalanceados. Los datos del SIJ los traen
+     * (sumillas como "DEPOSITA S /*600") y las URLs de las grabaciones tienen guiones
+     * bajos que no se pueden escapar sin romper el enlace, así que estas respuestas se
+     * envían en texto plano, sin parse_mode.
+     */
+    protected function usaNegrita()
+    {
+        return false;
+    }
+
     public function handle(Request $request)
     {
         $update = Telegram::getWebhookUpdate();
@@ -156,18 +177,26 @@ class TelegramController extends Controller
         $consulta->save();
         
 
-        Telegram::sendMessage(['chat_id' => $consulta->chatId, 'text' => 'Buscando expediente, por favor espere...']);
-        if($consulta->status == 1 && $consulta->step == 1){
-            sleep(2); // Bloqueo solicitado de 2 segundos
-        }
-        
+        Telegram::sendMessage([
+            'chat_id' => $consulta->chatId,
+            'text' => $this->mensajeBuscandoExpediente(),
+        ]);
 
-        $expediente = CabExpediente::where('xFormato', $expedienteNum)->where('chatId', $consulta->chatId)->first();
+        $expediente = $this->esperarExpediente($consulta, $expedienteNum);
 
         if (!$expediente) {
+            // status = 3 lo pone el microservicio cuando confirmó que el expediente no
+            // existe. Si no llegó a ponerlo, lo que se agotó fue la espera: son dos
+            // situaciones distintas y conviene no decirle al ciudadano que su expediente
+            // no existe cuando en realidad el sistema se demoró.
+            $textoError = ($consulta->status == 3)
+                ? "No se encontró el expediente. Por favor, verifica el número e ingrésalo de nuevo."
+                : "El sistema está tardando más de lo habitual y no pudimos completar la consulta. "
+                    . "Por favor, vuelve a enviar el número de expediente en unos minutos.";
+
             Telegram::sendMessage([
                 'chat_id' => $consulta->chatId,
-                'text' => "No se encontró el expediente. Por favor, verifica el número e ingrésalo de nuevo.",
+                'text' => $textoError,
             ]);
             $consulta->status = 0; // Resetear el estado
             $consulta->step = 0; // Volver al paso inicial
@@ -207,6 +236,43 @@ class TelegramController extends Controller
         $consulta->updDatetime = now();
         $consulta->updTimestamp = now()->timestamp;
         $consulta->save();
+    }
+
+    /**
+     * Espera a que ms-jurisia-judicial resuelva el expediente y lo devuelve.
+     *
+     * Sustituye al sleep(2) fijo anterior. En lugar de dormir un tiempo fijo y mirar una
+     * sola vez, sondea la base cada medio segundo hasta el tope de esperaMaximaSegundos()
+     * y corta en cuanto tiene una respuesta:
+     *
+     *   - Si aparece el expediente, responde de inmediato (normalmente en 2-3 segundos).
+     *   - Si el microservicio marca status = 3 (no encontrado), corta sin agotar la espera.
+     *
+     * Devuelve null si el expediente no existe o si se agotó el plazo.
+     */
+    private function esperarExpediente(MainConsulta $consulta, string $expedienteNum)
+    {
+        $limite = microtime(true) + $this->esperaMaximaSegundos();
+
+        do {
+            $expediente = CabExpediente::where('xFormato', $expedienteNum)
+                ->where('chatId', $consulta->chatId)
+                ->first();
+
+            if ($expediente) {
+                return $expediente;
+            }
+
+            // El microservicio ya respondió que no lo encontró: no tiene sentido seguir.
+            $consulta->refresh();
+            if ($consulta->status == 3) {
+                return null;
+            }
+
+            $this->dormirIntervalo();
+        } while (microtime(true) < $limite);
+
+        return null;
     }
 
     /**
@@ -265,10 +331,11 @@ class TelegramController extends Controller
         // DNI validado
         $keyboard = Keyboard::make()->inline()
         ->row(Keyboard::inlineButton(['text' => 'Información General del Expediente', 'callback_data' => 'consulta_info_general']))
+        ->row(Keyboard::inlineButton(['text' => 'Estado del Expediente', 'callback_data' => 'consulta_estadoexp']))
+        ->row(Keyboard::inlineButton(['text' => 'Ubicación del Expediente', 'callback_data' => 'consulta_ubicacion']))
         ->row(Keyboard::inlineButton(['text' => 'Detalle de Escritos del Expediente', 'callback_data' => 'consulta_detalle_escritos']))
         ->row(Keyboard::inlineButton(['text' => 'Próximas Audiencias del Expediente', 'callback_data' => 'consulta_proximas_audiencias']))
-            ->row(Keyboard::inlineButton(['text' => 'Ubicación del Expediente', 'callback_data' => 'consulta_ubicacion']))
-            ->row(Keyboard::inlineButton(['text' => 'Estado del Expediente', 'callback_data' => 'consulta_estadoexp']));
+        ->row(Keyboard::inlineButton(['text' => 'Audiencias del Expediente Realizadas', 'callback_data' => 'consulta_audiencias_realizadas']));
             //->row(Keyboard::inlineButton(['text' => 'Depósitos Judiciales', 'callback_data' => 'consulta_depositos']))
             //->row(Keyboard::inlineButton(['text' => 'Calificación de la Demanda', 'callback_data' => 'consulta_calificacion']))
             //->row(Keyboard::inlineButton(['text' => 'Estado de la Demanda', 'callback_data' => 'consulta_estadodemanda']))
@@ -294,54 +361,64 @@ class TelegramController extends Controller
     private function handleStep4_ProvideDetails(MainConsulta $consulta, string $callbackData)
     {
         $expediente = CabExpediente::where('xFormato', $consulta->message)->where('chatId', $consulta->chatId)->first();
+
+        if (!$expediente) {
+            Telegram::sendMessage([
+                'chat_id' => $consulta->chatId,
+                'text' => 'No fue posible recuperar el expediente. Por favor, inicia la consulta nuevamente.',
+            ]);
+            $this->resetConversation($consulta);
+            return;
+        }
+
         $detalle = DetailsExpediente::where('nUnico', $expediente->nUnico)->where('chatId', $consulta->chatId)->first();
-        $responseText = "No se encontró información para esa consulta.";
 
         $tipoConsulta = str_replace('consulta_', '', $callbackData);
 
-        $respuesta_ini = "El expediente " . $expediente->xFormato . " de la Instancia " . $expediente->instancia . " de la especiadidad " . $expediente->codEspecialidad ;
-        $respuesta_ini .= " de la materia" . ($detalle->xDescMateria ?? 'No disponible') ." Que tiene como Juez a " . ($detalle->juez ?? 'No disponible');
-        $respuesta_ini .= " y Secretario " . ($detalle->secretario ?? 'No disponible') . " Tiene la Siguiente Información.\n\n";
+        switch ($tipoConsulta) {
+            case 'info_general':
+                $responseText = $this->respuestaInfoGeneral($expediente, $detalle, $consulta->chatId);
+                break;
+            case 'estadoexp':
+                $responseText = $this->respuestaEstado($expediente, $detalle);
+                break;
+            case 'ubicacion':
+                $responseText = $this->respuestaUbicacion($expediente, $detalle);
+                break;
+            case 'detalle_escritos':
+                $responseText = $this->respuestaEscritos($expediente, $detalle, $consulta->chatId);
+                break;
+            case 'proximas_audiencias':
+                $responseText = $this->respuestaProximasAudiencias($expediente, $detalle, $consulta->chatId);
+                break;
+            case 'audiencias_realizadas':
+                $responseText = $this->respuestaAudienciasRealizadas($expediente, $detalle, $consulta->chatId);
+                break;
 
-        if ($detalle) {
-            switch ($tipoConsulta) {
-                case 'info_general':
-                    $responseText = $respuesta_ini." *Información General del Expediente:*\n" . ($detalle->xDescUbicacion ?? 'No disponible');
-                    break;
-                case 'detalle_escritos':
-                    $responseText = $respuesta_ini." *Detalle de Escritos del Expediente:*\n" . ($detalle->xDescUbicacion ?? 'No disponible');
-                    break;
-                case 'proximas_audiencias':
-                    $responseText = $respuesta_ini." *Próximas Audiencias del Expediente:*\n" . ($detalle->xDescUbicacion ?? 'No se tienen audiencias programadas próximamente.');
-                    break;
-
-                case 'ubicacion':
-                    $responseText = $respuesta_ini." *Ubicación del Expediente:*\n" . ($detalle->xDescUbicacion ?? 'No disponible');
-                    break;
-                case 'estadoexp':
-                    $responseText = $respuesta_ini." *Estado del Expediente:*\n" . ($detalle->xDescEstado ?? 'No disponible');
-                    break;
-                case 'depositos':
-                    // Aquí iría la lógica para buscar en una tabla de depósitos, si existiera.
-                    $responseText = $respuesta_ini." *Depósitos Judiciales:*\nActualmente no hay información de depósitos disponible a través de este canal.";
-                    break;
-                case 'calificacion':
-                    $responseText = $respuesta_ini." *Calificación de la Demanda:*\nActualmente no hay información de calificación de demanda disponible a través de este canal.";
-                    break;
-                case 'estadodemanda':
-                    $responseText = $respuesta_ini." *Estado de la Demanda:*\nActualmente no hay información de estado de demanda disponible a través de este canal.";
-                    break;
-                case 'liquidacion':
-                    $responseText = $respuesta_ini." *Liquidaciones:*\nActualmente no hay información de liquidaciones disponible a través de este canal.";
-                    break;
-                case 'informe':
-                    $responseText = $respuesta_ini." *Informe Multidisciplinario:*\nActualmente no hay información de informes multidisciplinarios disponible a través de este canal.";
-                    break;
-                default:
-                    $responseText = "Consulta no reconocida. Por favor, inténtalo de nuevo.";
-                    break;
-            }
+                /*
+            case 'depositos':
+                // Aquí iría la lógica para buscar en una tabla de depósitos, si existiera.
+                $responseText = "*Depósitos Judiciales:*\nActualmente no hay información de depósitos disponible a través de este canal.";
+                break;
+            case 'calificacion':
+                $responseText = "*Calificación de la Demanda:*\nActualmente no hay información de calificación de demanda disponible a través de este canal.";
+                break;
+            case 'estadodemanda':
+                $responseText = "*Estado de la Demanda:*\nActualmente no hay información de estado de demanda disponible a través de este canal.";
+                break;
+            case 'liquidacion':
+                $responseText = "*Liquidaciones:*\nActualmente no hay información de liquidaciones disponible a través de este canal.";
+                break;
+            case 'informe':
+                $responseText = "*Informe Multidisciplinario:*\nActualmente no hay información de informes multidisciplinarios disponible a través de este canal.";
+                break;
+                */
+            default:
+                $responseText = "Consulta no reconocida. Por favor, inténtalo de nuevo.";
+                break;
         }
+
+        $responseText = $this->limitarLongitud($responseText, self::LIMITE_MENSAJE);
 
         $consulta->consultaEspecifica = $tipoConsulta;
         $consulta->updDate = now()->toDateString();
@@ -349,10 +426,10 @@ class TelegramController extends Controller
         $consulta->updTimestamp = now()->timestamp;
         $consulta->save();
 
+        // Sin parse_mode a propósito: ver la nota de $usaNegrita.
         Telegram::sendMessage([
             'chat_id' => $consulta->chatId,
             'text' => $responseText,
-            'parse_mode' => 'Markdown',
         ]);
 
         Telegram::sendMessage(['chat_id' => $consulta->chatId, 'text' => 'Gracias por usar nuestro servicio. La consulta ha finalizado.']);

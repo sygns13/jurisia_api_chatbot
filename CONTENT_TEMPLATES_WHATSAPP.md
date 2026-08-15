@@ -72,11 +72,12 @@ curl -X POST https://content.twilio.com/v1/Content \
         "body": "¡Validación exitosa! ¿Qué deseas consultar?",
         "button": "Ver opciones",
         "items": [
-          { "id": "consulta_info_general",        "item": "Información General", "description": "Información general del expediente" },
-          { "id": "consulta_detalle_escritos",    "item": "Detalle de Escritos", "description": "Escritos presentados en el expediente" },
-          { "id": "consulta_proximas_audiencias", "item": "Próximas Audiencias", "description": "Audiencias programadas" },
-          { "id": "consulta_ubicacion",           "item": "Ubicación",           "description": "Ubicación actual del expediente" },
-          { "id": "consulta_estadoexp",           "item": "Estado",              "description": "Estado actual del expediente" }
+          { "id": "consulta_info_general",         "item": "Información General", "description": "Información general del expediente" },
+          { "id": "consulta_estadoexp",            "item": "Estado",              "description": "Estado actual del expediente" },
+          { "id": "consulta_ubicacion",            "item": "Ubicación",           "description": "Ubicación actual del expediente" },
+          { "id": "consulta_detalle_escritos",     "item": "Detalle de Escritos", "description": "Escritos presentados en el expediente" },
+          { "id": "consulta_proximas_audiencias",  "item": "Próximas Audiencias", "description": "Audiencias programadas" },
+          { "id": "consulta_audiencias_realizadas","item": "Audiencias Realizadas","description": "Audiencias ya realizadas en el expediente" }
         ]
       }
     }
@@ -86,6 +87,17 @@ curl -X POST https://content.twilio.com/v1/Content \
 Los `id` deben conservar el prefijo **`consulta_`** y coincidir exactamente con
 los casos del `switch` en `handleStep4_ProvideDetails()`. El controlador lee ese
 identificador desde el campo `ButtonPayload` del webhook entrante.
+
+> **Pendiente de aplicar en Twilio.** Esta plantilla pasó de 5 a 6 ítems: antes
+> faltaba `consulta_audiencias_realizadas`, por lo que esa opción era inalcanzable
+> desde la lista interactiva (solo se podía llegar respondiendo "6" en el respaldo
+> en texto plano). La cantidad de ítems de un `list-picker` se fija al crearla, así
+> que hay que **volver a crear la plantilla** con este JSON y actualizar
+> `TWILIO_CONTENT_SID_CONSULTAS` con el SID nuevo. El límite de WhatsApp es de 10
+> ítems, de modo que los 6 caben sin problema.
+>
+> Mientras no se actualice, el bot sigue funcionando: al no reconocer la opción,
+> responde con el listado numerado en texto plano.
 
 ---
 

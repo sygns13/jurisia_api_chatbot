@@ -5,16 +5,16 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class DetailsExpediente extends Model
+class AudienciasExp extends Model
 {
     use HasFactory;
 
-     /**
+    /**
      * El nombre de la tabla asociada con el modelo.
      *
      * @var string
      */
-    protected $table = 'DetailsExpediente';
+    protected $table = 'AudienciasExp';
 
     /**
      * El nombre de la conexión a la base de datos para el modelo.
@@ -31,6 +31,16 @@ class DetailsExpediente extends Model
     public $timestamps = false;
 
     /**
+     * Audiencia ya realizada.
+     */
+    const TIPO_REALIZADA = 'REAL';
+
+    /**
+     * Audiencia programada a futuro.
+     */
+    const TIPO_PROGRAMADA = 'PROG';
+
+    /**
      * Los atributos que son asignables en masa.
      *
      * @var array<int, string>
@@ -38,24 +48,18 @@ class DetailsExpediente extends Model
     protected $fillable = [
         'nUnico',
         'xFormato',
-        'xNomInstancia',
-        'codEspecialidad',
-        'xDescMateria',
-        'fInicio',
-        'xDescEstado',
-        'codUbicacion',
-        'xDescUbicacion',
-        'usuarioJuez',
-        'juez',
-        'usuarioSecretario',
-        'secretario',
-        'tipoExpediente',
-        'xDescSede',
-        'xDescEspecialidad',
         'nIncidente',
-        'parte',
-        'indTipoParte',
-        'xDescParte',
+        'xNomInstancia',
+        'especialista',
+        'indTipoAudiencia',
+        'nProgramacion',
+        'nSala',
+        'lEstado',
+        'xDescAudiencia',
+        'fAudiencia',
+        'xArchivoActa',
+        'xArchivoAudio',
+        'xEnlace',
         'regDate',
         'regDatetime',
         'regTimestamp',
@@ -69,7 +73,9 @@ class DetailsExpediente extends Model
      */
     protected $casts = [
         'nUnico' => 'integer',
-        'fInicio' => 'datetime',
+        'nProgramacion' => 'integer',
+        'nSala' => 'integer',
+        'fAudiencia' => 'datetime',
         'regDate' => 'date',
         'regDatetime' => 'datetime',
         'regTimestamp' => 'integer',

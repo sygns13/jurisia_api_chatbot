@@ -6,6 +6,8 @@ use App\Models\MainConsulta;
 use App\Models\CabExpediente;
 use App\Models\PartesExp;
 use App\Models\DetailsExpediente;
+use App\Models\EscritosExp;
+use App\Models\AudienciasExp;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -62,6 +64,11 @@ class ApiController extends Controller
             'cabExpedienteChat' => 'nullable|required_if:expFound,true|array',
             'listPartes' => 'nullable|required_if:expFound,true|array',
             'detailsExp' => 'nullable|required_if:expFound,true|array',
+            // Escritos y audiencias son opcionales: si la consulta al SIJ falla, el
+            // microservicio envía el resto de la información igual y el bot responde
+            // "no disponible" solo en esas opciones, en vez de quedarse sin respuesta.
+            'listEscritos' => 'nullable|array',
+            'listAudiencias' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
@@ -137,6 +144,11 @@ class ApiController extends Controller
                             'usuarioSecretario' => $detail['usuarioSecretario'] ?? null,
                             'secretario' => $detail['nombreSecretario'] ?? null,
                             'tipoExpediente' => $detail['tipoExpediente'] ?? null,
+                            // Descripciones de sede y especialidad e incidente, para la
+                            // opción "Información General" del bot.
+                            'xDescSede' => $detail['descSede'] ?? null,
+                            'xDescEspecialidad' => $detail['descEspecialidad'] ?? null,
+                            'nIncidente' => $detail['nincidente'] ?? null,
                             'parte' => $detail['parteNombreCompleto'] ?? null,
                             'indTipoParte' => $detail['tipoParte'] ?? null,
                             'xDescParte' => $detail['descTipoParte'] ?? null,
@@ -147,8 +159,14 @@ class ApiController extends Controller
                             'regTimestamp' => now()->timestamp,
                         ]);
                     }
-                    
-                    // 4. Actualizar MainConsulta a "Encontrado"
+
+                    // 4. Poblar EscritosExp y AudienciasExp
+                    $nUnico = $data['cabExpedienteChat']['nunico'] ?? null;
+
+                    $this->guardarEscritos($data, $mainConsulta, $nUnico);
+                    $this->guardarAudiencias($data, $mainConsulta, $nUnico);
+
+                    // 5. Actualizar MainConsulta a "Encontrado"
                     $mainConsulta->status = 2; // 2 -> Encontrado/Procesado
                 } else {
                     // Actualizar MainConsulta a "No Encontrado"
@@ -171,6 +189,90 @@ class ApiController extends Controller
                 'message' => 'Error al procesar la consulta con ID ' . $data['id'],
                 'error'   => $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Guarda los escritos del expediente para este chat.
+     *
+     * Antes de insertar se borran los registros previos del mismo chatId y expediente:
+     * un usuario puede consultar dos veces el mismo expediente y, sin este borrado, los
+     * escritos se acumularían duplicados (el microservicio envía hasta 50 en cada envío).
+     */
+    private function guardarEscritos(array $data, MainConsulta $mainConsulta, $nUnico)
+    {
+        $escritos = $data['listEscritos'] ?? [];
+
+        if (!is_array($escritos)) {
+            return;
+        }
+
+        EscritosExp::where('chatId', $mainConsulta->chatId)
+            ->where('nUnico', $nUnico)
+            ->delete();
+
+        foreach ($escritos as $escrito) {
+            EscritosExp::create([
+                'nUnico' => $escrito['nunico'] ?? $nUnico,
+                'xFormato' => $escrito['numeroExpediente'] ?? null,
+                'nIncidente' => $escrito['nincidente'] ?? null,
+                'xNomInstancia' => $escrito['instancia'] ?? null,
+                'especialista' => $escrito['especialista'] ?? null,
+                'nroEscrito' => $escrito['nroEscrito'] ?? null,
+                'fEscrito' => $escrito['fechaEscrito'] ?? null,
+                'fAtencion' => $escrito['fechaAtencion'] ?? null,
+                'xResolucion' => $escrito['resolucion'] ?? null,
+                'xSumilla' => $escrito['sumilla'] ?? null,
+                'xNombreArchivo' => $escrito['nombreArchivo'] ?? null,
+                'chatId' => $mainConsulta->chatId,
+                // --- CAMPOS DE FECHA Y HORA ACTUALES ---
+                'regDate' => now()->toDateString(),
+                'regDatetime' => now(),
+                'regTimestamp' => now()->timestamp,
+            ]);
+        }
+    }
+
+    /**
+     * Guarda las audiencias del expediente para este chat.
+     *
+     * Realizadas y programadas llegan en una sola lista, diferenciadas por 'tipoAudiencia'
+     * ('REAL' / 'PROG'). Mismo criterio de borrado previo que en guardarEscritos().
+     */
+    private function guardarAudiencias(array $data, MainConsulta $mainConsulta, $nUnico)
+    {
+        $audiencias = $data['listAudiencias'] ?? [];
+
+        if (!is_array($audiencias)) {
+            return;
+        }
+
+        AudienciasExp::where('chatId', $mainConsulta->chatId)
+            ->where('nUnico', $nUnico)
+            ->delete();
+
+        foreach ($audiencias as $audiencia) {
+            AudienciasExp::create([
+                'nUnico' => $audiencia['nunico'] ?? $nUnico,
+                'xFormato' => $audiencia['numeroExpediente'] ?? null,
+                'nIncidente' => $audiencia['nincidente'] ?? null,
+                'xNomInstancia' => $audiencia['instancia'] ?? null,
+                'especialista' => $audiencia['especialista'] ?? null,
+                'indTipoAudiencia' => $audiencia['tipoAudiencia'] ?? null,
+                'nProgramacion' => $audiencia['nprogramacion'] ?? null,
+                'nSala' => $audiencia['nsala'] ?? null,
+                'lEstado' => $audiencia['estado'] ?? null,
+                'xDescAudiencia' => $audiencia['descripcionAudiencia'] ?? null,
+                'fAudiencia' => $audiencia['fechaAudiencia'] ?? null,
+                'xArchivoActa' => $audiencia['archivoActa'] ?? null,
+                'xArchivoAudio' => $audiencia['archivoAudio'] ?? null,
+                'xEnlace' => $audiencia['enlace'] ?? null,
+                'chatId' => $mainConsulta->chatId,
+                // --- CAMPOS DE FECHA Y HORA ACTUALES ---
+                'regDate' => now()->toDateString(),
+                'regDatetime' => now(),
+                'regTimestamp' => now()->timestamp,
+            ]);
         }
     }
 }

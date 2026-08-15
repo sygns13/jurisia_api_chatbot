@@ -11,9 +11,18 @@ use App\Models\MainConsulta;
 use App\Models\CabExpediente;
 use App\Models\PartesExp;
 use App\Models\DetailsExpediente;
+use App\Http\Controllers\Concerns\FormateaRespuestasExpediente;
 
 class WhatsAppController extends Controller
 {
+    use FormateaRespuestasExpediente;
+
+    /**
+     * Límite práctico de caracteres de un mensaje de WhatsApp. Por encima, el texto se
+     * trunca sin aviso, por lo que el recorte se hace de forma explícita.
+     */
+    const LIMITE_MENSAJE = 1500;
+
     /**
      * Cliente REST de Twilio. Se instancia bajo demanda.
      *
@@ -330,18 +339,20 @@ class WhatsAppController extends Controller
         $consulta->updTimestamp = now()->timestamp;
         $consulta->save();
 
-        if (!$this->sendMessage($consulta->chatId, 'Buscando expediente, por favor espere...')) {
+        if (!$this->sendMessage($consulta->chatId, $this->mensajeBuscandoExpediente())) {
             return; // Sin canal de salida no tiene sentido continuar con la búsqueda.
         }
 
-        if ($consulta->status == 1 && $consulta->step == 1) {
-            sleep(2); // Bloqueo solicitado de 2 segundos
-        }
-
-        $expediente = CabExpediente::where('xFormato', $expedienteNum)->first();
+        $expediente = $this->esperarExpediente($consulta, $expedienteNum);
 
         if (!$expediente) {
-            $this->sendMessage($consulta->chatId, "No se encontró el expediente. Por favor, verifica el número e ingrésalo de nuevo.");
+            // status = 3 lo pone el microservicio cuando confirmó que el expediente no
+            // existe. Si no llegó a ponerlo, lo que se agotó fue la espera: conviene no
+            // decirle al ciudadano que su expediente no existe cuando el sistema se demoró.
+            $this->sendMessage($consulta->chatId, ($consulta->status == 3)
+                ? "No se encontró el expediente. Por favor, verifica el número e ingrésalo de nuevo."
+                : "El sistema está tardando más de lo habitual y no pudimos completar la consulta. "
+                    . "Por favor, vuelve a enviar el número de expediente en unos minutos.");
             // No cambiamos el step, para que el usuario pueda intentarlo de nuevo.
             return;
         }
@@ -388,6 +399,43 @@ class WhatsAppController extends Controller
         $consulta->updDatetime = now();
         $consulta->updTimestamp = now()->timestamp;
         $consulta->save();
+    }
+
+    /**
+     * Espera a que ms-jurisia-judicial resuelva el expediente y lo devuelve.
+     *
+     * Sustituye al sleep(2) fijo anterior: sondea cada medio segundo hasta el tope de
+     * esperaMaximaSegundos() y corta apenas hay respuesta, sea el expediente encontrado o
+     * el status = 3 que marca el microservicio cuando no existe.
+     *
+     * El tope de 8 segundos está calculado para no agotar el límite de 15 segundos que
+     * Twilio concede a un webhook, contando el envío del aviso y el de la respuesta.
+     *
+     * La búsqueda no filtra por chatId, igual que el resto de este controlador.
+     *
+     * Devuelve null si el expediente no existe o si se agotó el plazo.
+     */
+    private function esperarExpediente(MainConsulta $consulta, string $expedienteNum)
+    {
+        $limite = microtime(true) + $this->esperaMaximaSegundos();
+
+        do {
+            $expediente = CabExpediente::where('xFormato', $expedienteNum)->first();
+
+            if ($expediente) {
+                return $expediente;
+            }
+
+            // El microservicio ya respondió que no lo encontró: no tiene sentido seguir.
+            $consulta->refresh();
+            if ($consulta->status == 3) {
+                return null;
+            }
+
+            $this->dormirIntervalo();
+        } while (microtime(true) < $limite);
+
+        return null;
     }
 
     /**
@@ -530,10 +578,11 @@ class WhatsAppController extends Controller
             // Respaldo en texto plano cuando no hay plantilla configurada.
             $responseText = "¡Validación exitosa! ¿Qué deseas consultar?\nResponde con el número de la opción:\n\n" .
                             "1. Información General del Expediente\n" .
-                            "2. Detalle de Escritos del Expediente\n" .
-                            "3. Próximas Audiencias del Expediente\n" .
-                            "4. Ubicación del Expediente\n" .
-                            "5. Estado del Expediente\n";
+                            "2. Estado del Expediente\n" .
+                            "3. Ubicación del Expediente\n" .
+                            "4. Detalle de Escritos del Expediente\n" .
+                            "5. Próximas Audiencias del Expediente\n" .
+                            "6. Audiencias del Expediente Realizadas\n";
 
             $enviado = $this->sendMessage($consulta->chatId, $responseText);
         }
@@ -567,19 +616,14 @@ class WhatsAppController extends Controller
         }
 
         $detalle = DetailsExpediente::where('nUnico', $expediente->nUnico)->first();
-        $responseText = "No se encontró información para esa consulta.";
 
         $mapOpciones = [
             '1' => 'info_general',
-            '2' => 'detalle_escritos',
-            '3' => 'proximas_audiencias',
-            '4' => 'ubicacion',
-            '5' => 'estadoexp',
-            '6' => 'depositos',
-            '7' => 'calificacion',
-            '8' => 'estadodemanda',
-            '9' => 'liquidacion',
-            '10' => 'informe',
+            '2' => 'estadoexp',
+            '3' => 'ubicacion',
+            '4' => 'detalle_escritos',
+            '5' => 'proximas_audiencias',
+            '6' => 'audiencias_realizadas',
         ];
 
         $entrada = strtolower(trim($opcion));
@@ -595,51 +639,33 @@ class WhatsAppController extends Controller
             $tipoConsulta = isset($mapOpciones[$entrada]) ? $mapOpciones[$entrada] : 'invalida';
         }
 
-        $respuesta_ini = "El expediente " . $expediente->xFormato . " de la Instancia " . $expediente->instancia . " de la especiadidad " . $expediente->codEspecialidad ;
-        $respuesta_ini .= " de la materia" . ($detalle->xDescMateria ?? 'No disponible') ." Que tiene como Juez a " . ($detalle->juez ?? 'No disponible');
-        $respuesta_ini .= " y Secretario " . ($detalle->secretario ?? 'No disponible') . " Tiene la Siguiente Información.\n\n";
-
-        if ($detalle && $tipoConsulta !== 'invalida') {
-             switch ($tipoConsulta) {
-                case 'info_general':
-                    $responseText = $respuesta_ini." *Información General del Expediente:*\n" . ($detalle->xDescUbicacion ?? 'No disponible');
-                    break;
-                case 'detalle_escritos':
-                    $responseText = $respuesta_ini." *Detalle de Escritos del Expediente:*\n" . ($detalle->xDescUbicacion ?? 'No disponible');
-                    break;
-                case 'proximas_audiencias':
-                    $responseText = $respuesta_ini." *Próximas Audiencias del Expediente:*\n" . ($detalle->xDescUbicacion ?? 'No se tienen audiencias programadas próximamente.');
-                    break;
-
-                case 'ubicacion':
-                    $responseText = $respuesta_ini." *Ubicación del Expediente:*\n" . ($detalle->xDescUbicacion ?? 'No disponible');
-                    break;
-                case 'estadoexp':
-                    $responseText = $respuesta_ini." *Estado del Expediente:*\n" . ($detalle->xDescEstado ?? 'No disponible');
-                    break;
-                case 'depositos':
-                    // Aquí iría la lógica para buscar en una tabla de depósitos, si existiera.
-                    $responseText = $respuesta_ini." *Depósitos Judiciales:*\nActualmente no hay información de depósitos disponible a través de este canal.";
-                    break;
-                case 'calificacion':
-                    $responseText = $respuesta_ini." *Calificación de la Demanda:*\nActualmente no hay información de calificación de demanda disponible a través de este canal.";
-                    break;
-                case 'estadodemanda':
-                    $responseText = $respuesta_ini." *Estado de la Demanda:*\nActualmente no hay información de estado de demanda disponible a través de este canal.";
-                    break;
-                case 'liquidacion':
-                    $responseText = $respuesta_ini." *Liquidaciones:*\nActualmente no hay información de liquidaciones disponible a través de este canal.";
-                    break;
-                case 'informe':
-                    $responseText = $respuesta_ini." *Informe Multidisciplinario:*\nActualmente no hay información de informes multidisciplinarios disponible a través de este canal.";
-                    break;
-                default:
-                    $responseText = "Consulta no reconocida. Por favor, inténtalo de nuevo.";
-                    break;
-            }
-        } else {
-            $responseText = "La opción '{$opcion}' no es válida. La consulta ha finalizado.";
+        switch ($tipoConsulta) {
+            case 'info_general':
+                $responseText = $this->respuestaInfoGeneral($expediente, $detalle, $consulta->chatId);
+                break;
+            case 'estadoexp':
+                $responseText = $this->respuestaEstado($expediente, $detalle);
+                break;
+            case 'ubicacion':
+                $responseText = $this->respuestaUbicacion($expediente, $detalle);
+                break;
+            case 'detalle_escritos':
+                $responseText = $this->respuestaEscritos($expediente, $detalle, $consulta->chatId);
+                break;
+            case 'proximas_audiencias':
+                $responseText = $this->respuestaProximasAudiencias($expediente, $detalle, $consulta->chatId);
+                break;
+            case 'audiencias_realizadas':
+                $responseText = $this->respuestaAudienciasRealizadas($expediente, $detalle, $consulta->chatId);
+                break;
+            default:
+                // Opción no reconocida: se mantiene al usuario en el paso 4 para que
+                // pueda reintentar, en lugar de dar la consulta por terminada.
+                $this->sendMessage($consulta->chatId, "La opción '{$opcion}' no es válida. Por favor, elige una de las opciones mostradas anteriormente.");
+                return;
         }
+
+        $responseText = $this->limitarLongitud($responseText, self::LIMITE_MENSAJE);
 
         $consulta->consultaEspecifica = $tipoConsulta;
         $consulta->updDate = now()->toDateString();

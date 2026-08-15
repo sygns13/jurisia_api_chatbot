@@ -5,16 +5,16 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class DetailsExpediente extends Model
+class EscritosExp extends Model
 {
     use HasFactory;
 
-     /**
+    /**
      * El nombre de la tabla asociada con el modelo.
      *
      * @var string
      */
-    protected $table = 'DetailsExpediente';
+    protected $table = 'EscritosExp';
 
     /**
      * El nombre de la conexión a la base de datos para el modelo.
@@ -38,24 +38,15 @@ class DetailsExpediente extends Model
     protected $fillable = [
         'nUnico',
         'xFormato',
-        'xNomInstancia',
-        'codEspecialidad',
-        'xDescMateria',
-        'fInicio',
-        'xDescEstado',
-        'codUbicacion',
-        'xDescUbicacion',
-        'usuarioJuez',
-        'juez',
-        'usuarioSecretario',
-        'secretario',
-        'tipoExpediente',
-        'xDescSede',
-        'xDescEspecialidad',
         'nIncidente',
-        'parte',
-        'indTipoParte',
-        'xDescParte',
+        'xNomInstancia',
+        'especialista',
+        'nroEscrito',
+        'fEscrito',
+        'fAtencion',
+        'xResolucion',
+        'xSumilla',
+        'xNombreArchivo',
         'regDate',
         'regDatetime',
         'regTimestamp',
@@ -69,7 +60,8 @@ class DetailsExpediente extends Model
      */
     protected $casts = [
         'nUnico' => 'integer',
-        'fInicio' => 'datetime',
+        'fEscrito' => 'datetime',
+        'fAtencion' => 'datetime',
         'regDate' => 'date',
         'regDatetime' => 'datetime',
         'regTimestamp' => 'integer',
