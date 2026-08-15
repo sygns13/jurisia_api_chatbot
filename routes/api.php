@@ -5,7 +5,6 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\TelegramController;
 use App\Http\Controllers\WhatsAppController;
 use App\Http\Controllers\ApiController;
-use App\Http\Controllers\MainConsultaController;
 
 /*
 |--------------------------------------------------------------------------
@@ -29,8 +28,6 @@ Route::post('/v1/telegram/webhook', [TelegramController::class, 'handle']);
 
 // Endpoint para manejar los webhooks de WhatsApp
 Route::post('/v1/whatsapp/webhook', [WhatsAppController::class, 'handle']);
-// Endpoint para obtener consultas principales
-Route::post('/v1/main-consulta', [MainConsultaController::class, 'getMainConsulta']);
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();

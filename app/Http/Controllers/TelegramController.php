@@ -264,13 +264,16 @@ class TelegramController extends Controller
 
         // DNI validado
         $keyboard = Keyboard::make()->inline()
+        ->row(Keyboard::inlineButton(['text' => 'Información General del Expediente', 'callback_data' => 'consulta_info_general']))
+        ->row(Keyboard::inlineButton(['text' => 'Detalle de Escritos del Expediente', 'callback_data' => 'consulta_detalle_escritos']))
+        ->row(Keyboard::inlineButton(['text' => 'Próximas Audiencias del Expediente', 'callback_data' => 'consulta_proximas_audiencias']))
             ->row(Keyboard::inlineButton(['text' => 'Ubicación del Expediente', 'callback_data' => 'consulta_ubicacion']))
-            ->row(Keyboard::inlineButton(['text' => 'Estado del Expediente', 'callback_data' => 'consulta_estadoexp']))
-            ->row(Keyboard::inlineButton(['text' => 'Depósitos Judiciales', 'callback_data' => 'consulta_depositos']))
-            ->row(Keyboard::inlineButton(['text' => 'Calificación de la Demanda', 'callback_data' => 'consulta_calificacion']))
-            ->row(Keyboard::inlineButton(['text' => 'Estado de la Demanda', 'callback_data' => 'consulta_estadodemanda']))
-            ->row(Keyboard::inlineButton(['text' => 'Liquidaciones', 'callback_data' => 'consulta_liquidacion']))
-            ->row(Keyboard::inlineButton(['text' => 'Informe Multidisciplinario', 'callback_data' => 'consulta_informe']));
+            ->row(Keyboard::inlineButton(['text' => 'Estado del Expediente', 'callback_data' => 'consulta_estadoexp']));
+            //->row(Keyboard::inlineButton(['text' => 'Depósitos Judiciales', 'callback_data' => 'consulta_depositos']))
+            //->row(Keyboard::inlineButton(['text' => 'Calificación de la Demanda', 'callback_data' => 'consulta_calificacion']))
+            //->row(Keyboard::inlineButton(['text' => 'Estado de la Demanda', 'callback_data' => 'consulta_estadodemanda']))
+            //->row(Keyboard::inlineButton(['text' => 'Liquidaciones', 'callback_data' => 'consulta_liquidacion']))
+            //->row(Keyboard::inlineButton(['text' => 'Informe Multidisciplinario', 'callback_data' => 'consulta_informe']));
 
         Telegram::sendMessage([
             'chat_id' => $consulta->chatId,
@@ -302,6 +305,16 @@ class TelegramController extends Controller
 
         if ($detalle) {
             switch ($tipoConsulta) {
+                case 'info_general':
+                    $responseText = $respuesta_ini." *Información General del Expediente:*\n" . ($detalle->xDescUbicacion ?? 'No disponible');
+                    break;
+                case 'detalle_escritos':
+                    $responseText = $respuesta_ini." *Detalle de Escritos del Expediente:*\n" . ($detalle->xDescUbicacion ?? 'No disponible');
+                    break;
+                case 'proximas_audiencias':
+                    $responseText = $respuesta_ini." *Próximas Audiencias del Expediente:*\n" . ($detalle->xDescUbicacion ?? 'No se tienen audiencias programadas próximamente.');
+                    break;
+
                 case 'ubicacion':
                     $responseText = $respuesta_ini." *Ubicación del Expediente:*\n" . ($detalle->xDescUbicacion ?? 'No disponible');
                     break;
