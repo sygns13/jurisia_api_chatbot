@@ -109,7 +109,7 @@ ALTER TABLE u230756120_JURISDB_CHATB.PartesExp
 
 
 
-CREATE TABLE DetailsExpediente (
+CREATE TABLE u230756120_JURISDB_CHATB.DetailsExpediente (
     id bigint unsigned primary key not null auto_increment,
     nUnico              BIGINT          COMMENT 'Número único del expediente al que pertenece la parte.',
     xFormato            VARCHAR(100)    COMMENT 'Número de formato completo del expediente.',
